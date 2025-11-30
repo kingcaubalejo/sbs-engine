@@ -38,6 +38,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 	allowedOrigins := map[string]bool{
+		"http://13.229.210.18": true,
 		"http://localhost:8080": true,
 		"https://yourdomain.com": true,
 	}

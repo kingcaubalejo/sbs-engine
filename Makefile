@@ -5,13 +5,22 @@ all: build test
 
 build:
 	@echo "Building..."
-	
-	
 	@go build -o main cmd/api/main.go
+
+# Build for Linux (EC2)
+build-linux:
+	@echo "Building for Linux..."
+	@GOOS=linux GOARCH=amd64 go build -o main-linux cmd/api/main.go
 
 # Run the application
 run:
-	@go run cmd/api/main.go
+	@source ./load-env.sh development && go run cmd/api/main.go
+
+run-staging:
+	@source ./load-env.sh staging && go run cmd/api/main.go
+
+run-prod:
+	@source ./load-env.sh production && go run cmd/api/main.go
 # Create DB container
 docker-run:
 	@if docker compose up --build 2>/dev/null; then \

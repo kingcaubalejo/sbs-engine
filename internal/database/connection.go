@@ -36,8 +36,11 @@ func NewDatabase() *Database {
 	if username == "" && password == "" {
 		uri = fmt.Sprintf("mongodb://%s:%s/%s", host, port, database)
 	} else {
-		uri = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?ssl=false&authSource=admin",
-			username, password, host, port, database,
+		// uri = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?ssl=false&authSource=admin",
+		// 	username, password, host, port, database,
+		// )
+		uri = fmt.Sprintf("mongodb+srv://%s:%s@%s/%s?retryWrites=true&w=majority",
+			username, password, host, database,
 		)
 	}
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))

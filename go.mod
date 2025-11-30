@@ -1,8 +1,8 @@
 module sbs-engine
 
-go 1.24.0
+go 1.25
 
-toolchain go1.24.9
+toolchain go1.25.0
 
 require (
 	github.com/joho/godotenv v1.5.1
