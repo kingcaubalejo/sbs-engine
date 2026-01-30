@@ -34,3 +34,61 @@ func (d *Database) GetVolumes() []Volume {
 	}
 	return volumes
 }
+
+func (d *Database) CreateVolume(volume Volume) Volume {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	collection := d.DB.Collection("volumes")
+	
+	_, err := collection.InsertOne(ctx, volume)
+	if err != nil {
+		panic(err)
+	}
+	return volume
+}
+
+func (d *Database) UpdateVolume(id int, volume Volume) Volume {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	collection := d.DB.Collection("volumes")
+	
+	_, err := collection.ReplaceOne(ctx, bson.M{"id": id}, volume)
+	if err != nil {
+		panic(err)
+	}
+	return volume
+}
+
+func (d *Database) PatchVolume(id int, updates map[string]interface{}) Volume {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	collection := d.DB.Collection("volumes")
+	
+	_, err := collection.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": updates})
+	if err != nil {
+		panic(err)
+	}
+
+	var volume Volume
+	err = collection.FindOne(ctx, bson.M{"id": id}).Decode(&volume)
+	if err != nil {
+		panic(err)
+	}
+	return volume
+}
+
+func (d *Database) DeleteVolume(id int) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	collection := d.DB.Collection("volumes")
+	
+	result, err := collection.DeleteOne(ctx, bson.M{"id": id})
+	if err != nil {
+		panic(err)
+	}
+	return result.DeletedCount > 0
+}

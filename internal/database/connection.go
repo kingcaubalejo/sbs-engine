@@ -13,6 +13,10 @@ import (
 
 type Service interface {
 	GetVolumes() []Volume
+	CreateVolume(volume Volume) Volume
+	UpdateVolume(id int, volume Volume) Volume
+	PatchVolume(id int, updates map[string]interface{}) Volume
+	DeleteVolume(id int) bool
 	GetBooksByVolume(volumeId int, lang string) []Sermon
 	HealthCheck() map[string]string
 	GetDonation() Donation
