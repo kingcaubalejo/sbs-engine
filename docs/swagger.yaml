@@ -1,0 +1,485 @@
+basePath: /api
+definitions:
+  database.Sermon:
+    properties:
+      _id:
+        type: string
+      book_number:
+        type: integer
+      content:
+        type: string
+      id:
+        type: integer
+      image_url:
+        type: string
+      quote:
+        type: string
+      sbs_number:
+        type: integer
+      title:
+        type: string
+      volume_number:
+        type: integer
+    type: object
+  database.Volume:
+    properties:
+      id:
+        type: integer
+      image_url:
+        type: string
+      total_languages:
+        type: integer
+      total_sbs:
+        type: integer
+      volume_number:
+        type: integer
+    type: object
+  response.APIResponse:
+    properties:
+      data: {}
+      error: {}
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: REST API for the SBS (Sermon By Sermon) Engine service.
+  title: SBS Engine API
+  version: "1.0"
+paths:
+  /:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Hello World
+      tags:
+      - general
+  /app-volume-list/{volume_number}:
+    get:
+      parameters:
+      - description: Volume number
+        in: path
+        name: volume_number
+        required: true
+        type: integer
+      - description: 'Language code (default: en)'
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get books by volume
+      tags:
+      - books
+  /donate:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get donation URL
+      tags:
+      - general
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - general
+  /languages:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: List supported languages
+      tags:
+      - general
+  /message-qoutes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Message quotes
+      tags:
+      - general
+  /sermons:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Sermon payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/database.Sermon'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Create a new sermon
+      tags:
+      - sermons
+  /sermons/{object_id}:
+    delete:
+      parameters:
+      - description: MongoDB ObjectID hex
+        in: path
+        name: object_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Delete a sermon by ObjectID
+      tags:
+      - sermons
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: MongoDB ObjectID hex
+        in: path
+        name: object_id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Partially update a sermon
+      tags:
+      - sermons
+  /sermons/random:
+    get:
+      parameters:
+      - description: 'Language code (default: en)'
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get a random sermon
+      tags:
+      - sermons
+  /sermons/search:
+    get:
+      parameters:
+      - description: Search keyword
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: 'Language code (default: en)'
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Search sermons by keyword
+      tags:
+      - sermons
+  /stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get platform statistics
+      tags:
+      - general
+  /volumes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: List all volumes
+      tags:
+      - volumes
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Volume payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/database.Volume'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Create a volume
+      tags:
+      - volumes
+  /volumes/{id}:
+    delete:
+      parameters:
+      - description: Volume ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Delete a volume
+      tags:
+      - volumes
+    get:
+      parameters:
+      - description: Volume ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get a single volume
+      tags:
+      - volumes
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Volume ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Partially update a volume
+      tags:
+      - volumes
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Volume ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Volume payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/database.Volume'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Replace a volume
+      tags:
+      - volumes
+  /volumes/{volume_number}/sermons/{sbs_number}:
+    get:
+      parameters:
+      - description: Volume number
+        in: path
+        name: volume_number
+        required: true
+        type: integer
+      - description: SBS (sermon) number
+        in: path
+        name: sbs_number
+        required: true
+        type: integer
+      - description: 'Language code (default: en)'
+        in: query
+        name: lang
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Get a specific sermon by volume and SBS number
+      tags:
+      - sermons
+  /volumes/paginated:
+    get:
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 10, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: List volumes with pagination
+      tags:
+      - volumes
+swagger: "2.0"

@@ -43,10 +43,10 @@ docker-down:
 test:
 	@echo "Testing..."
 	@go test ./... -v
-# Integrations Tests for the application
+# Integration Tests for the application (requires Docker)
 itest:
 	@echo "Running integration tests..."
-	@go test ./internal/database -v
+	@DOCKER_HOST=unix:///var/run/docker.sock go test -tags=integration ./internal/database/... -v
 
 # Clean the binary
 clean:

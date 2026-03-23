@@ -6,7 +6,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	_"go.mongodb.org/mongo-driver/mongo"
 )
 
 type Sermon struct {
@@ -25,15 +24,10 @@ func (d *Database) GetBooksByVolume(volumeId int, lang string) []Sermon {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	languages := map[string]int{
-		"en": 1,
-		"de": 2,
-	}
-	
 	collection := d.DB.Collection("books")
 	filter := bson.M{
-		"volume_number": volumeId, 
-		"id": languages[lang],
+		"volume_number": volumeId,
+		"id":            supportedLanguages[lang],
 	}
 
 	cursor, err := collection.Find(ctx, filter)

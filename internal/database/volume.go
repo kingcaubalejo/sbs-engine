@@ -5,7 +5,8 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	_"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Volume struct {
@@ -78,6 +79,59 @@ func (d *Database) PatchVolume(id int, updates map[string]interface{}) Volume {
 		panic(err)
 	}
 	return volume
+}
+
+// GetVolumeByID retrieves a single volume by its integer ID.
+func (d *Database) GetVolumeByID(id int) (Volume, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	var volume Volume
+	err := d.DB.Collection("volumes").FindOne(ctx, bson.M{"id": id}).Decode(&volume)
+	if err == mongo.ErrNoDocuments {
+		return Volume{}, false
+	}
+	if err != nil {
+		panic(err)
+	}
+	return volume, true
+}
+
+// PaginatedVolumes wraps a page of volumes with total-count metadata.
+type PaginatedVolumes struct {
+	Items []Volume `json:"items"`
+	Total int64    `json:"total"`
+	Page  int      `json:"page"`
+	Limit int      `json:"limit"`
+	Pages int64    `json:"pages"`
+}
+
+// GetVolumesPaginated returns a page of volumes and the total document count.
+func (d *Database) GetVolumesPaginated(page, limit int) ([]Volume, int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	collection := d.DB.Collection("volumes")
+
+	total, err := collection.CountDocuments(ctx, bson.M{})
+	if err != nil {
+		panic(err)
+	}
+
+	skip := int64((page - 1) * limit)
+	opts := options.Find().SetSkip(skip).SetLimit(int64(limit))
+
+	cursor, err := collection.Find(ctx, bson.M{}, opts)
+	if err != nil {
+		panic(err)
+	}
+	defer cursor.Close(ctx)
+
+	var volumes []Volume
+	if err := cursor.All(ctx, &volumes); err != nil {
+		panic(err)
+	}
+	return volumes, total
 }
 
 func (d *Database) DeleteVolume(id int) bool {
