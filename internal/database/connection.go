@@ -12,14 +12,29 @@ import (
 )
 
 type Service interface {
+	// Volume operations
 	GetVolumes() []Volume
+	GetVolumeByID(id int) (Volume, bool)
+	GetVolumesPaginated(page, limit int) ([]Volume, int64)
 	CreateVolume(volume Volume) Volume
 	UpdateVolume(id int, volume Volume) Volume
 	PatchVolume(id int, updates map[string]interface{}) Volume
 	DeleteVolume(id int) bool
+
+	// Sermon operations
 	GetBooksByVolume(volumeId int, lang string) []Sermon
+	GetSermonByLocation(volumeNumber, sbsNumber int, lang string) (Sermon, bool)
+	SearchSermons(query, lang string) []Sermon
+	GetRandomSermon(lang string) (Sermon, bool)
+	CreateSermon(sermon Sermon) Sermon
+	DeleteSermon(objectID string) bool
+	PatchSermon(objectID string, updates map[string]interface{}) (Sermon, bool)
+
+	// Utility
 	HealthCheck() map[string]string
 	GetDonation() Donation
+	GetStats() Stats
+	GetLanguages() []Language
 }
 
 type Database struct {
@@ -40,12 +55,12 @@ func NewDatabase() *Database {
 	if username == "" && password == "" {
 		uri = fmt.Sprintf("mongodb://%s:%s/%s", host, port, database)
 	} else {
-		// uri = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?ssl=false&authSource=admin",
-		// 	username, password, host, port, database,
-		// )
-		uri = fmt.Sprintf("mongodb+srv://%s:%s@%s/%s?retryWrites=true&w=majority",
-			username, password, host, database,
+		uri = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?ssl=false&authSource=admin",
+			username, password, host, port, database,
 		)
+		// uri = fmt.Sprintf("mongodb+srv://%s:%s@%s/%s?retryWrites=true&w=majority",
+		// 	username, password, host, database,
+		// )
 	}
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
 	if err != nil {

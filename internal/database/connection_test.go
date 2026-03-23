@@ -1,3 +1,5 @@
+//go:build integration
+
 package database
 
 import (
@@ -27,6 +29,7 @@ func mustStartMongoContainer() (func(context.Context, ...testcontainers.Terminat
 
 	host = dbHost
 	port = dbPort.Port()
+	database = "testdb"
 
 	return dbContainer.Terminate, err
 }
