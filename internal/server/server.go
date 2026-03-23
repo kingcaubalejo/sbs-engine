@@ -2,7 +2,7 @@
 //
 //	@title			SBS Engine API
 //	@version		1.0
-//	@description	REST API for the SBS (Sermon By Sermon) Engine service.
+//	@description	REST API for the SBS (Spiritual Building Stones) Engine service.
 //	@host			localhost:8080
 //	@BasePath		/api
 package server

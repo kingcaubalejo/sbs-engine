@@ -757,7 +757,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api",
 	Schemes:          []string{},
 	Title:            "SBS Engine API",
-	Description:      "REST API for the SBS (Sermon By Sermon) Engine service.",
+	Description:      "REST API for the SBS (Spiritual Building Stones) Engine service.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
