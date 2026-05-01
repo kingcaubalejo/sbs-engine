@@ -2,7 +2,7 @@
 //
 //	@title			SBS Engine API
 //	@version		1.0
-//	@description	REST API for the SBS (Sermon By Sermon) Engine service.
+//	@description	REST API for the SBS (Spiritual Building Stones) Engine service.
 //	@host			localhost:8080
 //	@BasePath		/api
 package server
@@ -22,24 +22,30 @@ import (
 type Server struct {
 	port int
 
-	db database.Service
+	db     database.Service
+	caches *resourceCaches
 }
 
 func NewServer() *http.Server {
 	port, _ := strconv.Atoi(os.Getenv("PORT"))
+	if port == 0 {
+		port = 8080
+	}
 	db := database.NewDatabase()
 	NewServer := &Server{
-		port: port,
-		db: db,
+		port:   port,
+		db:     db,
+		caches: newResourceCaches(),
 	}
 
-	// Declare Server config
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", NewServer.port),
-		Handler:      NewServer.RegisterRoutes(),
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:              fmt.Sprintf(":%d", NewServer.port),
+		Handler:           NewServer.RegisterRoutes(),
+		IdleTimeout:       time.Minute,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
 	}
 
 	return server

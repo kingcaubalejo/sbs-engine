@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "REST API for the SBS (Sermon By Sermon) Engine service.",
+        "description": "REST API for the SBS (Spiritual Building Stones) Engine service.",
         "title": "SBS Engine API",
         "contact": {},
         "version": "1.0"
@@ -136,8 +136,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/response.APIResponse"
                         }
                     }
                 }

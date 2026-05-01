@@ -5,12 +5,12 @@ all: build test
 
 build:
 	@echo "Building..."
-	@go build -o main cmd/api/main.go
+	@go build -trimpath -ldflags="-s -w" -o main cmd/api/main.go
 
 # Build for Linux (EC2)
 build-linux:
 	@echo "Building for Linux..."
-	@GOOS=linux GOARCH=amd64 go build -o main-linux cmd/api/main.go
+	@GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o main-linux cmd/api/main.go
 
 # Run the application
 run:
@@ -48,6 +48,16 @@ itest:
 	@echo "Running integration tests..."
 	@DOCKER_HOST=unix:///var/run/docker.sock go test -tags=integration ./internal/database/... -v
 
+# Regenerate Swagger spec (docs/swagger.json|yaml|docs.go)
+swagger:
+	@echo "Regenerating Swagger spec..."
+	@swag init -g internal/server/server.go --output docs
+
+# Build a single self-contained HTML rendering of the API docs
+swagger-html: swagger
+	@echo "Rendering docs/api.html..."
+	@npx --yes @redocly/cli build-docs docs/swagger.json -o docs/api.html
+
 # Clean the binary
 clean:
 	@echo "Cleaning..."
@@ -70,4 +80,4 @@ watch:
             fi; \
         fi
 
-.PHONY: all build run test clean watch docker-run docker-down itest
+.PHONY: all build run test clean watch docker-run docker-down itest swagger swagger-html

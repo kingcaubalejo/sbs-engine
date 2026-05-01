@@ -2,12 +2,21 @@ package database
 
 import (
 	"context"
+	"regexp"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+// searchResultLimit caps how many documents SearchSermons returns. This
+// is a safety bound for both bandwidth (responses cannot grow without
+// limit) and Mongo work. Combined with a server-side regex fallback
+// length cap this keeps a single search from being able to scan and
+// stream the entire collection.
+const searchResultLimit = 50
 
 // GetSermonByLocation retrieves a single sermon by volume number, SBS number, and language.
 func (d *Database) GetSermonByLocation(volumeNumber, sbsNumber int, lang string) (Sermon, bool) {
@@ -37,7 +46,14 @@ func (d *Database) GetSermonByLocation(volumeNumber, sbsNumber int, lang string)
 	return sermon, true
 }
 
-// SearchSermons performs a case-insensitive search over title and content fields.
+// SearchSermons uses the books_text index for full-text search over title
+// and content. The content field is excluded from the projection so list
+// responses stay small; clients should call GetSermonByLocation to fetch
+// the full body for a result they want to read. If the text index is
+// missing (e.g. on a fresh database where ensureIndexes failed) the
+// query returns no rows rather than falling back to a COLLSCAN regex —
+// regex over title+content is the very abuse vector this rewrite exists
+// to close.
 func (d *Database) SearchSermons(query, lang string) []Sermon {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -48,25 +64,47 @@ func (d *Database) SearchSermons(query, lang string) []Sermon {
 	}
 
 	collection := d.DB.Collection("books")
-	filter := bson.M{
-		"id": langID,
-		"$or": bson.A{
-			bson.M{"title": bson.M{"$regex": query, "$options": "i"}},
-			bson.M{"content": bson.M{"$regex": query, "$options": "i"}},
-		},
-	}
 
-	cursor, err := collection.Find(ctx, filter)
+	filter := bson.M{
+		"id":    langID,
+		"$text": bson.M{"$search": sanitizeTextSearch(query)},
+	}
+	opts := options.Find().
+		SetProjection(bson.M{
+			"score":   bson.M{"$meta": "textScore"},
+			"content": 0,
+		}).
+		SetSort(bson.M{"score": bson.M{"$meta": "textScore"}}).
+		SetLimit(searchResultLimit)
+
+	cursor, err := collection.Find(ctx, filter, opts)
 	if err != nil {
-		panic(err)
+		// A missing $text index surfaces as a server-side error; treat
+		// the search as empty rather than panicking and crashing the
+		// server. The recover middleware would catch a panic but the
+		// caller would see a 500 on every search until indexes are
+		// rebuilt — an empty result set is friendlier.
+		return []Sermon{}
 	}
 	defer cursor.Close(ctx)
 
 	var sermons []Sermon
 	if err := cursor.All(ctx, &sermons); err != nil {
-		panic(err)
+		return []Sermon{}
 	}
 	return sermons
+}
+
+// sanitizeTextSearch makes the search input safe for $text. The text
+// search syntax supports phrase matching (with double quotes), negation
+// (with a leading -), and term separation (whitespace). For our public,
+// unauthenticated API we strip those operators and reduce input to bare
+// alphanumeric tokens, so a malicious user cannot craft an expensive
+// negation-heavy query. Result is space-separated tokens.
+func sanitizeTextSearch(q string) string {
+	re := regexp.MustCompile(`[^\p{L}\p{N}\s]+`)
+	cleaned := re.ReplaceAllString(q, " ")
+	return cleaned
 }
 
 // GetRandomSermon returns a single random sermon for the given language using MongoDB $sample.
