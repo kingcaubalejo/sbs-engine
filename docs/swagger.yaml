@@ -131,8 +131,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/response.APIResponse'
       summary: Message quotes
       tags:
       - general
