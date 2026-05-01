@@ -180,3 +180,105 @@ func TestRequestID_RespectsClientHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 }
+
+// ---------------------------------------------------------------------------
+// RequireAPIKey
+// ---------------------------------------------------------------------------
+
+func TestAuth_GETIsPublic(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "secret")
+	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET should be public; got %d", w.Code)
+	}
+}
+
+func TestAuth_WriteRejectsMissingKey(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "secret")
+	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("inner handler must not be reached without auth")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401; got %d", w.Code)
+	}
+	if w.Header().Get("WWW-Authenticate") == "" {
+		t.Error("expected WWW-Authenticate header on 401")
+	}
+}
+
+func TestAuth_WriteRejectsWrongKey(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "secret")
+	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("inner handler must not be reached")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer not-the-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401; got %d", w.Code)
+	}
+}
+
+func TestAuth_WriteAcceptsBearer(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "secret")
+	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with valid Bearer; got %d", w.Code)
+	}
+}
+
+func TestAuth_WriteAcceptsXAPIKey(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "secret")
+	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPut, "/", nil)
+	req.Header.Set("X-API-Key", "secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with valid X-API-Key; got %d", w.Code)
+	}
+}
+
+func TestAuth_FailsClosedWhenUnconfigured(t *testing.T) {
+	// No ADMIN_API_KEY set — middleware must refuse all writes with 503.
+	t.Setenv("ADMIN_API_KEY", "")
+	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("inner handler must not be reached when key is unset")
+	}))
+
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 when key is not configured; got %d", w.Code)
+	}
+}

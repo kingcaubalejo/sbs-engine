@@ -95,12 +95,41 @@ All configuration is via environment variables, loaded from `.env.<environment>`
 | `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST` | Per-IP token-bucket defaults |
 | `BODY_LIMIT_BYTES` | Maximum request-body size for write methods |
 | `ENABLE_SWAGGER` | Set to `true` to expose `/swagger/` (off in production by default) |
+| `ADMIN_API_KEY` | Required for write methods (POST/PUT/PATCH/DELETE). Empty = writes refused with 503. See [Authentication](#authentication). |
 
 Three pre-shaped env files are tracked as templates: `.env.development`, `.env.staging`, `.env.production`. The actual env files used at runtime are git-ignored.
 
+## Authentication
+
+Reads (`GET`, `HEAD`, `OPTIONS`) are public. **Mutations (`POST`, `PUT`, `PATCH`, `DELETE`) require an admin API key.** The check is enforced by [`middleware.RequireAPIKey`](internal/middleware/auth.go) and uses constant-time comparison to defeat timing attacks.
+
+Set `ADMIN_API_KEY` in the environment, then send it on every write request as either header:
+
+```bash
+# Preferred (matches the Swagger UI "Authorize" button)
+curl -X POST http://localhost:8080/api/volumes \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "id": 1, "volume_number": 1, "image_url": "v1.jpg", "total_sbs": 0, "total_languages": 1 }'
+
+# Alternate
+curl -X DELETE http://localhost:8080/api/volumes/1 \
+  -H "X-API-Key: $ADMIN_API_KEY"
+```
+
+Generate a strong key:
+
+```bash
+openssl rand -hex 32
+```
+
+If `ADMIN_API_KEY` is empty/unset, the middleware **fails closed** — every write returns `503 Service Unavailable` with `"admin API key is not configured"`. This prevents a misconfigured production deploy from accepting anonymous mutations. Wrong or missing key on a write returns `401 Unauthorized`.
+
+In Swagger UI, click **Authorize** and paste `Bearer <ADMIN_API_KEY>` to make the "Try it out" buttons work for write endpoints.
+
 ## API surface
 
-Routes are mounted under `/api/`. Full schemas live in the Swagger UI at `/swagger/index.html`.
+Routes are mounted under `/api/`. Full schemas live in the Swagger UI at `/swagger/index.html`. The 🔒 marker in the tables below indicates an endpoint requires `Authorization: Bearer $ADMIN_API_KEY`.
 
 ### Volumes
 
@@ -109,10 +138,10 @@ Routes are mounted under `/api/`. Full schemas live in the Swagger UI at `/swagg
 | GET | `/api/volumes` | List all volumes |
 | GET | `/api/volumes/paginated?page=&limit=` | Paginated list (max `limit` 100) |
 | GET | `/api/volumes/{id}` | Single volume |
-| POST | `/api/volumes` | Create |
-| PUT | `/api/volumes/{id}` | Replace |
-| PATCH | `/api/volumes/{id}` | Partial update (validated field allowlist) |
-| DELETE | `/api/volumes/{id}` | Delete |
+| POST | `/api/volumes` | Create 🔒 |
+| PUT | `/api/volumes/{id}` | Replace 🔒 |
+| PATCH | `/api/volumes/{id}` | Partial update (validated field allowlist) 🔒 |
+| DELETE | `/api/volumes/{id}` | Delete 🔒 |
 
 ### Sermons / Books
 
@@ -122,9 +151,9 @@ Routes are mounted under `/api/`. Full schemas live in the Swagger UI at `/swagg
 | GET | `/api/volumes/{volume_number}/sermons/{sbs_number}?lang=` | Single sermon by location |
 | GET | `/api/sermons/search?q=&lang=` | Full-text search over title + content |
 | GET | `/api/sermons/random?lang=` | One random sermon |
-| POST | `/api/sermons` | Create |
-| PATCH | `/api/sermons/{object_id}` | Partial update (title / quote / content / image_url) |
-| DELETE | `/api/sermons/{object_id}` | Delete |
+| POST | `/api/sermons` | Create 🔒 |
+| PATCH | `/api/sermons/{object_id}` | Partial update (title / quote / content / image_url) 🔒 |
+| DELETE | `/api/sermons/{object_id}` | Delete 🔒 |
 
 ### Utility / metadata
 
