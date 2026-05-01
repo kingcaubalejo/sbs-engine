@@ -84,6 +84,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 	mux.HandleFunc("GET /stats", s.getStats)
 	mux.HandleFunc("GET /languages", s.getLanguages)
 
+	mux.HandleFunc("POST /auth/login", s.loginHandler)
+	mux.HandleFunc("POST /auth/register", s.registerHandler)
+
 	v1 := http.NewServeMux()
 	v1.Handle("/api/", http.StripPrefix("/api", mux))
 	v1.HandleFunc("GET /robots.txt", robotsHandler)
@@ -92,7 +95,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	if os.Getenv("ENABLE_SWAGGER") == "true" {
 		final.Handle("/swagger/", httpSwagger.WrapHandler)
 	}
-	final.Handle("/", buildMiddlewareChain(v1))
+	final.Handle("/", s.buildMiddlewareChain(v1))
 
 	return final
 }
@@ -105,22 +108,24 @@ func (s *Server) RegisterRoutes() http.Handler {
 //	      └─ AccessLog (one structured line per request)
 //	        └─ CORS (preflight handled before rate-limit so OPTIONS is free)
 //	          └─ RateLimit (per-IP + per-route — runs BEFORE auth so a
-//	                       brute-force attempt on the API key is throttled)
-//	            └─ RequireAPIKey (gates non-GET requests on ADMIN_API_KEY;
-//	                              fail-closed if the key is unset)
+//	                       brute-force attempt on the credentials is throttled)
+//	            └─ RequireAuth (gates non-GET requests on a JWT issued by
+//	                            /auth/login. POST /auth/login is bypassed so
+//	                            it can mint tokens. Fails closed with 503
+//	                            if JWT_SECRET is not configured.)
 //	              └─ BodyLimit (only applies to write methods)
 //	                └─ Gzip (compresses below the cache layer so cached bytes
 //	                         are uncompressed and ETag matches the resource)
 //	                  └─ CacheHeaders (ETag + Cache-Control)
 //	                    └─ handler
-func buildMiddlewareChain(next http.Handler) http.Handler {
+func (s *Server) buildMiddlewareChain(next http.Handler) http.Handler {
 	rps, burst := rateLimitFromEnv()
 
 	chain := next
 	chain = middleware.CacheHeaders(middleware.DefaultCacheConfig())(chain)
 	chain = middleware.Gzip(chain)
 	chain = middleware.BodyLimit(bodyLimitBytes())(chain)
-	chain = middleware.RequireAPIKey(chain)
+	chain = middleware.RequireAuth(s.auth)(chain)
 	chain = middleware.RateLimit(middleware.RateLimitConfig{
 		Default: middleware.Bucket{RPS: rps, Burst: burst},
 		PerRoute: map[string]middleware.Bucket{

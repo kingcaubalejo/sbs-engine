@@ -43,12 +43,28 @@ definitions:
       success:
         type: boolean
     type: object
+  server.loginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  server.registerRequest:
+    properties:
+      email:
+        type: string
+      is_admin:
+        type: boolean
+      password:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
   description: |-
     REST API for the SBS (Spiritual Building Stones) Engine service.
-    Reads (GET) are public. Mutations (POST/PUT/PATCH/DELETE) require an admin API key sent as `Authorization: Bearer <ADMIN_API_KEY>`.
+    Reads (GET) are public. POST /auth/login is public. All other writes (POST/PUT/PATCH/DELETE) require a JWT obtained from /auth/login, sent as `Authorization: Bearer <jwt>`.
   title: SBS Engine API
   version: "1.0"
 paths:
@@ -88,6 +104,85 @@ paths:
       summary: Get books by volume
       tags:
       - books
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Exchange email + password for a JWT
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Existing admin users can create additional accounts. The new user
+        must log in via /auth/login to obtain a JWT — registration does not auto-issue
+        a token.
+      parameters:
+      - description: New user credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.registerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new user (admin only)
+      tags:
+      - auth
   /donate:
     get:
       produces:
@@ -527,7 +622,7 @@ paths:
       - volumes
 securityDefinitions:
   BearerAuth:
-    description: 'Provide as: `Bearer <ADMIN_API_KEY>`'
+    description: 'JWT from POST /auth/login. Format: `Bearer <jwt>`.'
     in: header
     name: Authorization
     type: apiKey
