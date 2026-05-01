@@ -6,7 +6,13 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+// booksListLimit caps GetBooksByVolume so that a single volume cannot
+// stream an unbounded number of sermons over the wire. Volumes
+// typically hold a few dozen sermons; 200 is a comfortable headroom.
+const booksListLimit = 200
 
 type Sermon struct {
     ObjectID     primitive.ObjectID `bson:"_id" json:"_id"`
@@ -30,7 +36,7 @@ func (d *Database) GetBooksByVolume(volumeId int, lang string) []Sermon {
 		"id":            supportedLanguages[lang],
 	}
 
-	cursor, err := collection.Find(ctx, filter)
+	cursor, err := collection.Find(ctx, filter, options.Find().SetLimit(booksListLimit))
 	if err != nil {
 		panic(err)
 	}

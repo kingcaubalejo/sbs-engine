@@ -3,9 +3,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
-	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,13 +12,52 @@ import (
 	"golang.org/x/time/rate"
 
 	_ "sbs-engine/docs"
+	"sbs-engine/internal/cache"
 	"sbs-engine/internal/database"
+	"sbs-engine/internal/middleware"
 	"sbs-engine/internal/response"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
+// searchQueryMaxLen rejects abusive search inputs at the handler before
+// they reach Mongo. 100 characters comfortably covers any reasonable
+// natural-language query and stops a pathological "qqqqq..." input
+// from forcing the database to score thousands of partial matches.
+const searchQueryMaxLen = 100
+
+// searchQueryMinLen rejects single-character searches that effectively
+// touch every document.
+const searchQueryMinLen = 2
+
+// resourceCaches groups the per-resource TTL caches that protect read
+// endpoints from repeated database hits. They are short-lived and keyed
+// by query (for endpoints with parameters) or a constant (for
+// parameterless endpoints). On write the relevant cache entries are
+// removed so callers see fresh data immediately.
+type resourceCaches struct {
+	stats    *cache.TTLCache[string, database.Stats]
+	langs    *cache.TTLCache[string, []database.Language]
+	volumes  *cache.TTLCache[string, []database.Volume]
+	volByID  *cache.TTLCache[int, database.Volume]
+	donate   *cache.TTLCache[string, database.Donation]
+}
+
+func newResourceCaches() *resourceCaches {
+	return &resourceCaches{
+		stats:   cache.NewTTL[string, database.Stats](),
+		langs:   cache.NewTTL[string, []database.Language](),
+		volumes: cache.NewTTL[string, []database.Volume](),
+		volByID: cache.NewTTL[int, database.Volume](),
+		donate:  cache.NewTTL[string, database.Donation](),
+	}
+}
+
 func (s *Server) RegisterRoutes() http.Handler {
+	if s.caches == nil {
+		s.caches = newResourceCaches()
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", s.HelloWorldHandler)
@@ -33,11 +71,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 	mux.HandleFunc("GET /message-qoutes", s.messageQoutesHandler)
 	mux.HandleFunc("GET /donate", s.donationHandler)
 
-	// Volume extensions
-	mux.HandleFunc("GET /volumes/paginated", s.getVolumesPaginated) // must be before wildcard
+	mux.HandleFunc("GET /volumes/paginated", s.getVolumesPaginated)
 	mux.HandleFunc("GET /volumes/{id}", s.getVolumeByID)
 
-	// Sermon endpoints — fixed paths registered before wildcard
 	mux.HandleFunc("GET /sermons/search", s.searchSermons)
 	mux.HandleFunc("GET /sermons/random", s.getRandomSermon)
 	mux.HandleFunc("POST /sermons", s.createSermon)
@@ -45,122 +81,117 @@ func (s *Server) RegisterRoutes() http.Handler {
 	mux.HandleFunc("PATCH /sermons/{object_id}", s.patchSermon)
 	mux.HandleFunc("GET /volumes/{volume_number}/sermons/{sbs_number}", s.getSermonByLocation)
 
-	// Utility
 	mux.HandleFunc("GET /stats", s.getStats)
 	mux.HandleFunc("GET /languages", s.getLanguages)
 
 	v1 := http.NewServeMux()
 	v1.Handle("/api/", http.StripPrefix("/api", mux))
+	v1.HandleFunc("GET /robots.txt", robotsHandler)
 
 	final := http.NewServeMux()
-	final.Handle("/swagger/", httpSwagger.WrapHandler)
-	final.Handle("/", s.corsMiddleware(s.rateLimitMiddleware(v1, 1, 2)))
-
-	handler := http.Handler(final)
-
-	return handler
-}
-
-func (s *Server) corsMiddleware(next http.Handler) http.Handler {
-
-	allowedOrigins := map[string]bool{
-		"http://13.229.210.18": true,
-		"http://localhost:8080": true,
-		"https://yourdomain.com": true,
+	if os.Getenv("ENABLE_SWAGGER") == "true" {
+		final.Handle("/swagger/", httpSwagger.WrapHandler)
 	}
+	final.Handle("/", buildMiddlewareChain(v1))
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if !allowedOrigins[origin] {
-			http.Error(w, "CORS origin not allowed", http.StatusForbidden)
-			return
-		}
-		
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
-		w.Header().Set("Access-Control-Allow-Credentials", "false")
-
-		// Handle preflight OPTIONS requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		// Proceed with the next handler
-		next.ServeHTTP(w, r)
-	})
+	return final
 }
 
-func (s *Server) rateLimitMiddleware(next http.Handler, r rate.Limit, burst int) http.Handler {
-	limiter := rate.NewLimiter(r, burst)
+// buildMiddlewareChain wires the request pipeline. Order matters:
+//
+//	Recover (outermost — catches panics in any inner middleware or handler)
+//	  └─ SecurityHeaders (cheap, always-on response headers)
+//	    └─ RequestID (must precede AccessLog so log lines have an ID)
+//	      └─ AccessLog (one structured line per request)
+//	        └─ CORS (preflight handled before rate-limit so OPTIONS is free)
+//	          └─ RateLimit (per-IP + per-route, with bypass for /health)
+//	            └─ BodyLimit (only applies to write methods)
+//	              └─ Gzip (compresses below the cache layer so cached bytes
+//	                       are uncompressed and ETag matches the resource)
+//	                └─ CacheHeaders (ETag + Cache-Control)
+//	                  └─ handler
+func buildMiddlewareChain(next http.Handler) http.Handler {
+	rps, burst := rateLimitFromEnv()
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		log.Printf("[Info] Ip Address= %v", ip)
-
-		if err != nil {
-			http.Error(w, "Error fetching Address", http.StatusTooManyRequests)
-			return
-		}
-
-		if !limiter.Allow() {
-
-			reservation := limiter.Reserve()
-			delay := reservation.Delay()
-
-			if delay <= 0 {
-				delay = time.Second
-			}
-
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", delay.Seconds()))
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	chain := next
+	chain = middleware.CacheHeaders(middleware.DefaultCacheConfig())(chain)
+	chain = middleware.Gzip(chain)
+	chain = middleware.BodyLimit(bodyLimitBytes())(chain)
+	chain = middleware.RateLimit(middleware.RateLimitConfig{
+		Default: middleware.Bucket{RPS: rps, Burst: burst},
+		PerRoute: map[string]middleware.Bucket{
+			"/api/sermons/search": {RPS: rate.Limit(0.5), Burst: 3},
+			"/api/sermons/random": {RPS: rate.Limit(2), Burst: 5},
+		},
+		Bypass: []string{"/health", "/api/health", "/swagger/", "/robots.txt"},
+	})(chain)
+	chain = middleware.CORS(chain)
+	chain = middleware.AccessLog(chain)
+	chain = middleware.RequestID(chain)
+	chain = middleware.SecurityHeaders(chain)
+	chain = middleware.Recover(chain)
+	return chain
 }
 
+func rateLimitFromEnv() (rate.Limit, int) {
+	rps := 5.0
+	burst := 10
+	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			rps = f
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			burst = n
+		}
+	}
+	return rate.Limit(rps), burst
+}
+
+func bodyLimitBytes() int64 {
+	const defaultLimit int64 = 64 << 10
+	if v := os.Getenv("BODY_LIMIT_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultLimit
+}
+
+func robotsHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write([]byte("User-agent: *\nDisallow: /\n"))
+}
 
 // HelloWorldHandler godoc
+//
 //	@Summary		Hello World
 //	@Tags			general
 //	@Produce		json
 //	@Success		200	{object}	map[string]string
 //	@Router			/ [get]
-func (s *Server) HelloWorldHandler(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]string{"message": "Hello World"}
-	jsonResp, err := json.Marshal(resp)
-	if err != nil {
-		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
-		return
-	}
+func (s *Server) HelloWorldHandler(w http.ResponseWriter, _ *http.Request) {
+	body, _ := json.Marshal(map[string]string{"message": "Hello World"})
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := w.Write(jsonResp); err != nil {
-		log.Printf("Failed to write response: %v", err)
-	}
+	_, _ = w.Write(body)
 }
 
 // healthHandler godoc
+//
 //	@Summary		Health check
 //	@Tags			general
 //	@Produce		json
 //	@Success		200	{object}	map[string]interface{}
 //	@Router			/health [get]
-func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	resp, err := json.Marshal(s.db.HealthCheck())
-	if err != nil {
-		http.Error(w, "Failed to marshal health check response", http.StatusInternalServerError)
-		return
-	}
+func (s *Server) healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := w.Write(resp); err != nil {
-		log.Printf("Failed to write response: %v", err)
-	}
+	_ = json.NewEncoder(w).Encode(s.db.HealthCheck())
 }
 
 // getBooksByVolumeHandler godoc
+//
 //	@Summary		Get books by volume
 //	@Tags			books
 //	@Produce		json
@@ -172,56 +203,64 @@ func (s *Server) getBooksByVolumeHandler(w http.ResponseWriter, r *http.Request)
 	language := r.URL.Query().Get("lang")
 	volumeNumber, _ := strconv.Atoi(r.PathValue("volume_number"))
 
-	if language ==  "" {
+	if language == "" {
 		language = "en"
 	}
 
 	books := s.db.GetBooksByVolume(volumeNumber, language)
-
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "List of books per volume", books)
 }
 
 // getVolumes godoc
+//
 //	@Summary		List all volumes
 //	@Tags			volumes
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/volumes [get]
-func (s *Server) getVolumes(w http.ResponseWriter, r *http.Request) {
-	volumes := s.db.GetVolumes()
-	w.Header().Set("Content-Type", "application/json")
+func (s *Server) getVolumes(w http.ResponseWriter, _ *http.Request) {
+	const key = "all"
+	const ttl = 5 * time.Minute
+
+	volumes, ok := s.caches.volumes.Get(key)
+	if !ok {
+		volumes = s.db.GetVolumes()
+		s.caches.volumes.Set(key, volumes, ttl)
+	}
 	response.Success(w, "List of volumes", volumes)
 }
 
 // messageQoutesHandler godoc
+//
 //	@Summary		Message quotes
 //	@Tags			general
 //	@Produce		json
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	response.APIResponse
 //	@Router			/message-qoutes [get]
-func (s *Server) messageQoutesHandler(w http.ResponseWriter, r *http.Request) {
-	resp, err := json.Marshal(s.db.HealthCheck())
-	if err != nil {
-		http.Error(w, "Failed to marshal health check response", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if _, err := w.Write(resp); err != nil {
-		log.Printf("Failed to write response: %v", err)
-	}
+func (s *Server) messageQoutesHandler(w http.ResponseWriter, _ *http.Request) {
+	response.Success(w, "Quotes", []string{
+		"In the beginning was the Word, and the Word was with God.",
+		"For God so loved the world.",
+		"The Lord is my shepherd; I shall not want.",
+	})
 }
 
 // donationHandler godoc
+//
 //	@Summary		Get donation URL
 //	@Tags			general
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/donate [get]
-func (s *Server) donationHandler(w http.ResponseWriter, r *http.Request) {
-	donate := s.db.GetDonation()
+func (s *Server) donationHandler(w http.ResponseWriter, _ *http.Request) {
+	const key = "default"
+	const ttl = time.Hour
 
-	w.Header().Set("Content-Type", "application/json")
+	donate, ok := s.caches.donate.Get(key)
+	if !ok {
+		donate = s.db.GetDonation()
+		s.caches.donate.Set(key, donate, ttl)
+	}
 	response.Success(w, "Paypal donate redirect url", donate)
 }
 
@@ -300,7 +339,18 @@ func validateID(id int) []string {
 	return errors
 }
 
+// invalidateVolumeCaches drops cached volume responses after a write so
+// the next read hits the database. Cheaper than recomputing every entry
+// and avoids serving stale data after a create/update/delete.
+func (s *Server) invalidateVolumeCaches(id int) {
+	s.caches.volumes.Remove("all")
+	if id > 0 {
+		s.caches.volByID.Remove(id)
+	}
+}
+
 // createVolume godoc
+//
 //	@Summary		Create a volume
 //	@Tags			volumes
 //	@Accept			json
@@ -335,12 +385,13 @@ func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 		TotalSBS:       volume.TotalSBS,
 		TotalLanguages: volume.TotalLanguages,
 	})
+	s.invalidateVolumeCaches(newVolume.ID)
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Volume created successfully", newVolume)
 }
 
 // updateVolume godoc
+//
 //	@Summary		Replace a volume
 //	@Tags			volumes
 //	@Accept			json
@@ -352,12 +403,12 @@ func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 //	@Router			/volumes/{id} [put]
 func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
-	
+
 	if errors := validateID(id); len(errors) > 0 {
 		response.Error(w, http.StatusBadRequest, strings.Join(errors, ", "))
 		return
 	}
-	
+
 	var volume struct {
 		ID             int    `json:"id"`
 		VolumeNumber   int    `json:"volume_number"`
@@ -383,12 +434,13 @@ func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 		TotalSBS:       volume.TotalSBS,
 		TotalLanguages: volume.TotalLanguages,
 	})
+	s.invalidateVolumeCaches(id)
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Volume updated successfully", updatedVolume)
 }
 
 // patchVolume godoc
+//
 //	@Summary		Partially update a volume
 //	@Tags			volumes
 //	@Accept			json
@@ -400,12 +452,12 @@ func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 //	@Router			/volumes/{id} [patch]
 func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
-	
+
 	if errors := validateID(id); len(errors) > 0 {
 		response.Error(w, http.StatusBadRequest, strings.Join(errors, ", "))
 		return
 	}
-	
+
 	var updates map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		response.Error(w, http.StatusBadRequest, "Invalid JSON payload")
@@ -423,12 +475,13 @@ func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedVolume := s.db.PatchVolume(id, updates)
+	s.invalidateVolumeCaches(id)
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Volume patched successfully", updatedVolume)
 }
 
 // deleteVolume godoc
+//
 //	@Summary		Delete a volume
 //	@Tags			volumes
 //	@Produce		json
@@ -439,19 +492,19 @@ func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 //	@Router			/volumes/{id} [delete]
 func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
-	
+
 	if errors := validateID(id); len(errors) > 0 {
 		response.Error(w, http.StatusBadRequest, strings.Join(errors, ", "))
 		return
 	}
-	
+
 	deleted := s.db.DeleteVolume(id)
 	if !deleted {
 		response.Error(w, http.StatusNotFound, "Volume not found")
 		return
 	}
+	s.invalidateVolumeCaches(id)
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Volume deleted successfully", nil)
 }
 
@@ -476,13 +529,19 @@ func (s *Server) getVolumeByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	const ttl = 5 * time.Minute
+	if v, ok := s.caches.volByID.Get(id); ok {
+		response.Success(w, "Volume retrieved", v)
+		return
+	}
+
 	volume, found := s.db.GetVolumeByID(id)
 	if !found {
 		response.Error(w, http.StatusNotFound, "Volume not found")
 		return
 	}
+	s.caches.volByID.Set(id, volume, ttl)
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Volume retrieved", volume)
 }
 
@@ -521,7 +580,6 @@ func (s *Server) getVolumesPaginated(w http.ResponseWriter, r *http.Request) {
 		Pages: pages,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Paginated list of volumes", result)
 }
 
@@ -560,7 +618,6 @@ func (s *Server) getSermonByLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Sermon retrieved", sermon)
 }
 
@@ -581,13 +638,16 @@ func (s *Server) searchSermons(w http.ResponseWriter, r *http.Request) {
 		lang = "en"
 	}
 
-	if query == "" {
-		response.Error(w, http.StatusBadRequest, "q parameter is required")
+	if len(query) < searchQueryMinLen {
+		response.Error(w, http.StatusBadRequest, fmt.Sprintf("q must be at least %d characters", searchQueryMinLen))
+		return
+	}
+	if len(query) > searchQueryMaxLen {
+		response.Error(w, http.StatusBadRequest, fmt.Sprintf("q must be at most %d characters", searchQueryMaxLen))
 		return
 	}
 
 	sermons := s.db.SearchSermons(query, lang)
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Search results", sermons)
 }
 
@@ -612,7 +672,6 @@ func (s *Server) getRandomSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Random sermon", sermon)
 }
 
@@ -656,7 +715,6 @@ func (s *Server) createSermon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := s.db.CreateSermon(sermon)
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Sermon created successfully", created)
 }
 
@@ -704,7 +762,6 @@ func (s *Server) deleteSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Sermon deleted successfully", nil)
 }
 
@@ -749,7 +806,6 @@ func (s *Server) patchSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	response.Success(w, "Sermon patched successfully", sermon)
 }
 
@@ -764,9 +820,15 @@ func (s *Server) patchSermon(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/stats [get]
-func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
-	stats := s.db.GetStats()
-	w.Header().Set("Content-Type", "application/json")
+func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
+	const key = "all"
+	const ttl = 5 * time.Minute
+
+	stats, ok := s.caches.stats.Get(key)
+	if !ok {
+		stats = s.db.GetStats()
+		s.caches.stats.Set(key, stats, ttl)
+	}
 	response.Success(w, "Platform statistics", stats)
 }
 
@@ -777,8 +839,14 @@ func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/languages [get]
-func (s *Server) getLanguages(w http.ResponseWriter, r *http.Request) {
-	languages := s.db.GetLanguages()
-	w.Header().Set("Content-Type", "application/json")
-	response.Success(w, "Available languages", languages)
+func (s *Server) getLanguages(w http.ResponseWriter, _ *http.Request) {
+	const key = "all"
+	const ttl = time.Hour
+
+	langs, ok := s.caches.langs.Get(key)
+	if !ok {
+		langs = s.db.GetLanguages()
+		s.caches.langs.Set(key, langs, ttl)
+	}
+	response.Success(w, "Available languages", langs)
 }

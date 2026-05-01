@@ -5,12 +5,12 @@ all: build test
 
 build:
 	@echo "Building..."
-	@go build -o main cmd/api/main.go
+	@go build -trimpath -ldflags="-s -w" -o main cmd/api/main.go
 
 # Build for Linux (EC2)
 build-linux:
 	@echo "Building for Linux..."
-	@GOOS=linux GOARCH=amd64 go build -o main-linux cmd/api/main.go
+	@GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o main-linux cmd/api/main.go
 
 # Run the application
 run:

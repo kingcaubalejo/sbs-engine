@@ -2,57 +2,64 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"errors"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"sbs-engine/internal/server"
 )
 
+func init() {
+	level := slog.LevelInfo
+	if v := strings.ToLower(os.Getenv("LOG_LEVEL")); v != "" {
+		switch v {
+		case "debug":
+			level = slog.LevelDebug
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+}
+
 func gracefulShutdown(apiServer *http.Server, done chan bool) {
-	// Create context that listens for the interrupt signal from the OS.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Listen for the interrupt signal.
 	<-ctx.Done()
 
-	log.Println("shutting down gracefully, press Ctrl+C again to force")
-	stop() // Allow Ctrl+C to force shutdown
+	slog.Info("shutting down gracefully")
+	stop()
 
-	// The context is used to inform the server it has 5 seconds to finish
-	// the request it is currently handling
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := apiServer.Shutdown(ctx); err != nil {
-		log.Printf("Server forced to shutdown with error: %v", err)
+		slog.Error("server forced to shutdown", "error", err)
 	}
 
-	log.Println("Server exiting")
-
-	// Notify the main goroutine that the shutdown is complete
+	slog.Info("server exiting")
 	done <- true
 }
 
 func main() {
+	apiServer := server.NewServer()
 
-	server := server.NewServer()
-
-	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
+	go gracefulShutdown(apiServer, done)
 
-	// Run graceful shutdown in a separate goroutine
-	go gracefulShutdown(server, done)
-
-	err := server.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
-		panic(fmt.Sprintf("http server error: %s", err))
+	slog.Info("server listening", "addr", apiServer.Addr)
+	if err := apiServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("http server error", "error", err)
+		os.Exit(1)
 	}
 
-	// Wait for the graceful shutdown to complete
 	<-done
-	log.Println("Graceful shutdown complete.")
+	slog.Info("graceful shutdown complete")
 }

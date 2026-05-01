@@ -17,13 +17,19 @@ type Volume struct {
 	TotalLanguages int   `json:"total_languages" bson:"total_languages"`
 }
 
+// volumesListLimit caps GetVolumes — small enough that an unbounded
+// scan cannot blow up egress on a public endpoint, large enough that
+// any realistic library fits in one response. Use GetVolumesPaginated
+// for collections that may exceed this.
+const volumesListLimit = 200
+
 func (d *Database) GetVolumes() []Volume {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
 	collection := d.DB.Collection("volumes")
-	
-	cursor, err := collection.Find(ctx, bson.M{})
+
+	cursor, err := collection.Find(ctx, bson.M{}, options.Find().SetLimit(volumesListLimit))
 	if err != nil {
 		panic(err)
 	}

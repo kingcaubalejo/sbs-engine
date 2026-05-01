@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"sbs-engine/internal/database"
+	"sbs-engine/internal/middleware"
 	"sbs-engine/internal/response"
 )
 
@@ -87,7 +88,7 @@ func (m *mockService) GetStats() database.Stats        { return m.stats }
 func (m *mockService) GetLanguages() []database.Language { return m.languages }
 
 func newTestServer(mock *mockService) *Server {
-	return &Server{db: mock}
+	return &Server{db: mock, caches: newResourceCaches()}
 }
 
 // ---------------------------------------------------------------------------
@@ -597,76 +598,91 @@ func TestDonationHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CORS middleware
+// CORS middleware (new policy: open GETs, allowlist for writes)
 // ---------------------------------------------------------------------------
 
-func TestCORSMiddleware_AllowedOrigin(t *testing.T) {
-	s := newTestServer(&mockService{})
+func TestCORSMiddleware_GETIsOpen(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := s.corsMiddleware(inner)
+	handler := middleware.CORS(inner)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Origin", "http://localhost:8080")
+	req.Header.Set("Origin", "https://anywhere.example")
 	w := httptest.NewRecorder()
-
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for allowed origin; got %d", w.Code)
+		t.Errorf("GET should be allowed for any origin; got %d", w.Code)
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "http://localhost:8080" {
-		t.Errorf("expected CORS header set; got %q", w.Header().Get("Access-Control-Allow-Origin"))
-	}
-}
-
-func TestCORSMiddleware_DeniedOrigin(t *testing.T) {
-	s := newTestServer(&mockService{})
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := s.corsMiddleware(inner)
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Origin", "https://evil.com")
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for disallowed origin; got %d", w.Code)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://anywhere.example" {
+		t.Errorf("expected origin reflected; got %q", got)
 	}
 }
 
-func TestCORSMiddleware_NoOrigin(t *testing.T) {
-	s := newTestServer(&mockService{})
+func TestCORSMiddleware_WriteAllowedOrigin(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := s.corsMiddleware(inner)
+	handler := middleware.CORS(inner)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Origin", "https://app.example.com")
 	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
 
+	if w.Code != http.StatusOK {
+		t.Errorf("POST from allowed origin should pass; got %d", w.Code)
+	}
+}
+
+func TestCORSMiddleware_WriteDeniedOrigin(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("inner handler must not be called for denied write")
+	})
+	handler := middleware.CORS(inner)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 when no Origin header; got %d", w.Code)
+		t.Errorf("POST from disallowed origin should return 403; got %d", w.Code)
+	}
+}
+
+func TestCORSMiddleware_WriteEmptyOriginPasses(t *testing.T) {
+	// Empty Origin = non-browser client (curl/server-to-server). The
+	// SOP threat model does not apply, so writes are accepted.
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := middleware.CORS(inner)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("POST with empty Origin should pass; got %d", w.Code)
 	}
 }
 
 func TestCORSMiddleware_Preflight(t *testing.T) {
-	s := newTestServer(&mockService{})
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("inner handler should not be called for OPTIONS preflight")
 	})
-	handler := s.corsMiddleware(inner)
+	handler := middleware.CORS(inner)
 
 	req := httptest.NewRequest(http.MethodOptions, "/", nil)
-	req.Header.Set("Origin", "http://localhost:8080")
+	req.Header.Set("Origin", "https://app.example.com")
 	w := httptest.NewRecorder()
-
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
