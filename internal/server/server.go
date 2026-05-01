@@ -3,8 +3,14 @@
 //	@title			SBS Engine API
 //	@version		1.0
 //	@description	REST API for the SBS (Spiritual Building Stones) Engine service.
+//	@description	Reads (GET) are public. Mutations (POST/PUT/PATCH/DELETE) require an admin API key sent as `Authorization: Bearer <ADMIN_API_KEY>`.
 //	@host			localhost:8080
 //	@BasePath		/api
+//
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
+//	@description				Provide as: `Bearer <ADMIN_API_KEY>`
 package server
 
 import (

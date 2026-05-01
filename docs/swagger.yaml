@@ -46,7 +46,9 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: REST API for the SBS (Spiritual Building Stones) Engine service.
+  description: |-
+    REST API for the SBS (Spiritual Building Stones) Engine service.
+    Reads (GET) are public. Mutations (POST/PUT/PATCH/DELETE) require an admin API key sent as `Authorization: Bearer <ADMIN_API_KEY>`.
   title: SBS Engine API
   version: "1.0"
 paths:
@@ -157,6 +159,12 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Create a new sermon
       tags:
       - sermons
@@ -179,10 +187,16 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Delete a sermon by ObjectID
       tags:
       - sermons
@@ -213,10 +227,16 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Partially update a sermon
       tags:
       - sermons
@@ -312,6 +332,12 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Create a volume
       tags:
       - volumes
@@ -334,10 +360,16 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Delete a volume
       tags:
       - volumes
@@ -393,6 +425,12 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Partially update a volume
       tags:
       - volumes
@@ -422,6 +460,12 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Replace a volume
       tags:
       - volumes
@@ -481,4 +525,10 @@ paths:
       summary: List volumes with pagination
       tags:
       - volumes
+securityDefinitions:
+  BearerAuth:
+    description: 'Provide as: `Bearer <ADMIN_API_KEY>`'
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

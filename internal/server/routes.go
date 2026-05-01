@@ -104,12 +104,15 @@ func (s *Server) RegisterRoutes() http.Handler {
 //	    └─ RequestID (must precede AccessLog so log lines have an ID)
 //	      └─ AccessLog (one structured line per request)
 //	        └─ CORS (preflight handled before rate-limit so OPTIONS is free)
-//	          └─ RateLimit (per-IP + per-route, with bypass for /health)
-//	            └─ BodyLimit (only applies to write methods)
-//	              └─ Gzip (compresses below the cache layer so cached bytes
-//	                       are uncompressed and ETag matches the resource)
-//	                └─ CacheHeaders (ETag + Cache-Control)
-//	                  └─ handler
+//	          └─ RateLimit (per-IP + per-route — runs BEFORE auth so a
+//	                       brute-force attempt on the API key is throttled)
+//	            └─ RequireAPIKey (gates non-GET requests on ADMIN_API_KEY;
+//	                              fail-closed if the key is unset)
+//	              └─ BodyLimit (only applies to write methods)
+//	                └─ Gzip (compresses below the cache layer so cached bytes
+//	                         are uncompressed and ETag matches the resource)
+//	                  └─ CacheHeaders (ETag + Cache-Control)
+//	                    └─ handler
 func buildMiddlewareChain(next http.Handler) http.Handler {
 	rps, burst := rateLimitFromEnv()
 
@@ -117,11 +120,12 @@ func buildMiddlewareChain(next http.Handler) http.Handler {
 	chain = middleware.CacheHeaders(middleware.DefaultCacheConfig())(chain)
 	chain = middleware.Gzip(chain)
 	chain = middleware.BodyLimit(bodyLimitBytes())(chain)
+	chain = middleware.RequireAPIKey(chain)
 	chain = middleware.RateLimit(middleware.RateLimitConfig{
 		Default: middleware.Bucket{RPS: rps, Burst: burst},
 		PerRoute: map[string]middleware.Bucket{
-			"/api/sermons/search": {RPS: rate.Limit(0.5), Burst: 3},
-			"/api/sermons/random": {RPS: rate.Limit(2), Burst: 5},
+			"/api/sermons/search": {RPS: rate.Limit(2), Burst: 10},
+			"/api/sermons/random": {RPS: rate.Limit(5), Burst: 15},
 		},
 		Bypass: []string{"/health", "/api/health", "/swagger/", "/robots.txt"},
 	})(chain)
@@ -134,8 +138,8 @@ func buildMiddlewareChain(next http.Handler) http.Handler {
 }
 
 func rateLimitFromEnv() (rate.Limit, int) {
-	rps := 5.0
-	burst := 10
+	rps := 20.0
+	burst := 40
 	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			rps = f
@@ -353,11 +357,13 @@ func (s *Server) invalidateVolumeCaches(id int) {
 //
 //	@Summary		Create a volume
 //	@Tags			volumes
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		database.Volume	true	"Volume payload"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Router			/volumes [post]
 func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 	var volume struct {
@@ -394,12 +400,14 @@ func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Replace a volume
 //	@Tags			volumes
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		int				true	"Volume ID"
 //	@Param			body	body		database.Volume	true	"Volume payload"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Router			/volumes/{id} [put]
 func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
@@ -443,12 +451,14 @@ func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Partially update a volume
 //	@Tags			volumes
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		int						true	"Volume ID"
 //	@Param			body	body		map[string]interface{}	true	"Fields to update"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Router			/volumes/{id} [patch]
 func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
@@ -484,10 +494,12 @@ func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Delete a volume
 //	@Tags			volumes
+//	@Security		BearerAuth
 //	@Produce		json
 //	@Param			id	path		int	true	"Volume ID"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Failure		404	{object}	response.APIResponse
 //	@Router			/volumes/{id} [delete]
 func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
@@ -696,11 +708,13 @@ func validateSermon(s database.Sermon) []string {
 //
 //	@Summary		Create a new sermon
 //	@Tags			sermons
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		database.Sermon	true	"Sermon payload"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Router			/sermons [post]
 func (s *Server) createSermon(w http.ResponseWriter, r *http.Request) {
 	var sermon database.Sermon
@@ -743,10 +757,12 @@ func validateSermonPatch(updates map[string]interface{}) []string {
 //
 //	@Summary		Delete a sermon by ObjectID
 //	@Tags			sermons
+//	@Security		BearerAuth
 //	@Produce		json
 //	@Param			object_id	path		string	true	"MongoDB ObjectID hex"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Failure		404	{object}	response.APIResponse
 //	@Router			/sermons/{object_id} [delete]
 func (s *Server) deleteSermon(w http.ResponseWriter, r *http.Request) {
@@ -769,12 +785,14 @@ func (s *Server) deleteSermon(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Partially update a sermon
 //	@Tags			sermons
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			object_id	path		string					true	"MongoDB ObjectID hex"
 //	@Param			body		body		map[string]interface{}	true	"Fields to update"
 //	@Success		200	{object}	response.APIResponse
 //	@Failure		400	{object}	response.APIResponse
+//	@Failure		401	{object}	response.APIResponse
 //	@Failure		404	{object}	response.APIResponse
 //	@Router			/sermons/{object_id} [patch]
 func (s *Server) patchSermon(w http.ResponseWriter, r *http.Request) {
