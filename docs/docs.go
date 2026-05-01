@@ -71,6 +71,126 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/login": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Exchange email + password for a JWT",
+                "parameters": [
+                    {
+                        "description": "Credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.loginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Existing admin users can create additional accounts. The new user must log in via /auth/login to obtain a JWT — registration does not auto-issue a token.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Create a new user (admin only)",
+                "parameters": [
+                    {
+                        "description": "New user credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.registerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/donate": {
             "get": {
                 "produces": [
@@ -822,11 +942,36 @@ const docTemplate = `{
                     "type": "boolean"
                 }
             }
+        },
+        "server.loginRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.registerRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "is_admin": {
+                    "type": "boolean"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
         }
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Provide as: ` + "`" + `Bearer \u003cADMIN_API_KEY\u003e` + "`" + `",
+            "description": "JWT from POST /auth/login. Format: ` + "`" + `Bearer \u003cjwt\u003e` + "`" + `.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
@@ -841,7 +986,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api",
 	Schemes:          []string{},
 	Title:            "SBS Engine API",
-	Description:      "REST API for the SBS (Spiritual Building Stones) Engine service.\nReads (GET) are public. Mutations (POST/PUT/PATCH/DELETE) require an admin API key sent as `Authorization: Bearer <ADMIN_API_KEY>`.",
+	Description:      "REST API for the SBS (Spiritual Building Stones) Engine service.\nReads (GET) are public. POST /auth/login is public. All other writes (POST/PUT/PATCH/DELETE) require a JWT obtained from /auth/login, sent as `Authorization: Bearer <jwt>`.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

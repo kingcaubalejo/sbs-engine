@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -182,12 +183,14 @@ func TestRequestID_RespectsClientHeader(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RequireAPIKey
+// RequireAuth — basic shape. JWT-specific cases (valid/expired/tampered)
+// live in auth_jwt_test.go.
 // ---------------------------------------------------------------------------
 
+// GET, HEAD, and OPTIONS are public; the verifier is never consulted
+// for them, so RequireAuth(nil) must let them through.
 func TestAuth_GETIsPublic(t *testing.T) {
-	t.Setenv("ADMIN_API_KEY", "secret")
-	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequireAuth(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -200,10 +203,35 @@ func TestAuth_GETIsPublic(t *testing.T) {
 	}
 }
 
-func TestAuth_WriteRejectsMissingKey(t *testing.T) {
-	t.Setenv("ADMIN_API_KEY", "secret")
-	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("inner handler must not be reached without auth")
+// When no verifier is configured (JWT_SECRET unset at startup) every
+// write fails closed with 503. This is the deliberate misconfiguration
+// guard: a deploy that forgot to set JWT_SECRET must not silently
+// accept anonymous writes.
+func TestAuth_FailsClosedWhenUnconfigured(t *testing.T) {
+	handler := RequireAuth(nil)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("inner handler must not be reached when verifier is nil")
+	}))
+
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 when verifier is nil; got %d", w.Code)
+	}
+}
+
+// Missing Authorization header on a write should produce 401 with a
+// WWW-Authenticate hint so HTTP clients (and the spec) know what
+// credential type to send. Token-shape cases are covered in
+// auth_jwt_test.go because they need a real Issuer.
+func TestAuth_WriteWithoutTokenIsUnauthorized(t *testing.T) {
+	// We pass a non-nil verifier here only so RequireAuth doesn't
+	// short-circuit on 503. The token check runs independently.
+	svc, _ := newTestAuth(t, time.Hour)
+	handler := RequireAuth(svc)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("inner handler must not be reached without a token")
 	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -215,70 +243,5 @@ func TestAuth_WriteRejectsMissingKey(t *testing.T) {
 	}
 	if w.Header().Get("WWW-Authenticate") == "" {
 		t.Error("expected WWW-Authenticate header on 401")
-	}
-}
-
-func TestAuth_WriteRejectsWrongKey(t *testing.T) {
-	t.Setenv("ADMIN_API_KEY", "secret")
-	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("inner handler must not be reached")
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.Header.Set("Authorization", "Bearer not-the-key")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401; got %d", w.Code)
-	}
-}
-
-func TestAuth_WriteAcceptsBearer(t *testing.T) {
-	t.Setenv("ADMIN_API_KEY", "secret")
-	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 with valid Bearer; got %d", w.Code)
-	}
-}
-
-func TestAuth_WriteAcceptsXAPIKey(t *testing.T) {
-	t.Setenv("ADMIN_API_KEY", "secret")
-	handler := RequireAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodPut, "/", nil)
-	req.Header.Set("X-API-Key", "secret")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 with valid X-API-Key; got %d", w.Code)
-	}
-}
-
-func TestAuth_FailsClosedWhenUnconfigured(t *testing.T) {
-	// No ADMIN_API_KEY set — middleware must refuse all writes with 503.
-	t.Setenv("ADMIN_API_KEY", "")
-	handler := RequireAPIKey(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("inner handler must not be reached when key is unset")
-	}))
-
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	req.Header.Set("Authorization", "Bearer anything")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503 when key is not configured; got %d", w.Code)
 	}
 }

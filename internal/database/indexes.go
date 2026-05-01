@@ -59,5 +59,15 @@ func (d *Database) ensureIndexes() error {
 		return err
 	}
 
+	users := d.DB.Collection("users")
+	if _, err := users.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys:    bson.D{{Key: "email", Value: 1}},
+			Options: options.Index().SetName("user_email").SetUnique(true),
+		},
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }
