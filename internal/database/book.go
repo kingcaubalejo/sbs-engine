@@ -36,7 +36,7 @@ func (d *Database) GetBooksByVolume(volumeId int, lang string) []Sermon {
 		"id":            supportedLanguages[lang],
 	}
 
-	cursor, err := collection.Find(ctx, filter, options.Find().SetLimit(booksListLimit))
+	cursor, err := collection.Find(ctx, filter, options.Find().SetLimit(booksListLimit).SetSort(bson.D{{Key: "sbs_number", Value: 1}}))
 	if err != nil {
 		panic(err)
 	}

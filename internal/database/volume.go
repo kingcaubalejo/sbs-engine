@@ -29,7 +29,7 @@ func (d *Database) GetVolumes() []Volume {
 
 	collection := d.DB.Collection("volumes")
 
-	cursor, err := collection.Find(ctx, bson.M{}, options.Find().SetLimit(volumesListLimit))
+	cursor, err := collection.Find(ctx, bson.M{}, options.Find().SetLimit(volumesListLimit).SetSort(bson.D{{Key: "volume_number", Value: 1}}))
 	if err != nil {
 		panic(err)
 	}
@@ -125,7 +125,7 @@ func (d *Database) GetVolumesPaginated(page, limit int) ([]Volume, int64) {
 	}
 
 	skip := int64((page - 1) * limit)
-	opts := options.Find().SetSkip(skip).SetLimit(int64(limit))
+	opts := options.Find().SetSkip(skip).SetLimit(int64(limit)).SetSort(bson.D{{Key: "volume_number", Value: 1}})
 
 	cursor, err := collection.Find(ctx, bson.M{}, opts)
 	if err != nil {
