@@ -1,0 +1,18 @@
+[Unit]
+Description=SBS Engine API
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/ec2-user/sbs-engine/main-linux
+Restart=always
+RestartSec=5
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/sbs-engine/
+EnvironmentFile=-/home/ec2-user/sbs-engine/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

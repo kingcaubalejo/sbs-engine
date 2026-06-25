@@ -1,0 +1,26 @@
+# Caddy reverse-proxy + auto-TLS for sbs-engine on Lightsail.
+#
+# Replace api.example.com with the real DNS name pointing at this host
+# before reloading. Caddy will request a Let's Encrypt cert on first start
+# (DNS must already resolve here, ports 80 and 443 must be open).
+#
+# Reload after edits:  sudo systemctl reload caddy
+
+api.example.com {
+	encode gzip zstd
+
+	# Forward real client IP to the Go server. The server already trusts
+	# 127.0.0.1/32 (TRUSTED_PROXY_CIDRS in .env.production), so it will
+	# honor X-Forwarded-For only from this hop.
+	reverse_proxy localhost:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# Caddy logs in JSON to journald via systemd; drop to file if preferred.
+	log {
+		output stderr
+		format json
+		level INFO
+	}
+}
