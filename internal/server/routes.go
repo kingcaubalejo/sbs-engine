@@ -139,6 +139,7 @@ func (s *Server) buildMiddlewareChain(next http.Handler) http.Handler {
 	chain = middleware.RequestID(chain)
 	chain = middleware.SecurityHeaders(chain)
 	chain = middleware.Recover(chain)
+	chain = middleware.APIVersionMiddleware(chain)
 	return chain
 }
 
@@ -227,16 +228,29 @@ func (s *Server) getBooksByVolumeHandler(w http.ResponseWriter, r *http.Request)
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/volumes [get]
-func (s *Server) getVolumes(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) getVolumes(w http.ResponseWriter, r *http.Request) {
 	const key = "all"
 	const ttl = 5 * time.Minute
+	apiVersion := middleware.GetAPIVersion(r)
 
 	volumes, ok := s.caches.volumes.Get(key)
 	if !ok {
 		volumes = s.db.GetVolumes()
 		s.caches.volumes.Set(key, volumes, ttl)
 	}
-	response.Success(w, "List of volumes", volumes)
+
+	if apiVersion == "1" {
+		fmt.Println("legacy code should be read here")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+	
+		_ = json.NewEncoder(w).Encode(volumes)
+	} 
+	
+	if apiVersion == "2"  {
+		response.Success(w, "List of volumes", volumes)
+	}
+
 }
 
 // messageQoutesHandler godoc
