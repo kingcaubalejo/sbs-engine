@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"sbs-engine/internal/observability"
 	"sbs-engine/internal/server"
 )
 
@@ -49,6 +50,19 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 }
 
 func main() {
+	otelShutdown, err := observability.Init(context.Background())
+	if err != nil {
+		slog.Error("otel init failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(ctx); err != nil {
+			slog.Warn("otel shutdown", "error", err)
+		}
+	}()
+
 	apiServer := server.NewServer()
 
 	done := make(chan bool, 1)

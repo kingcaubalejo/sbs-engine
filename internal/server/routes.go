@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/time/rate"
 
 	_ "sbs-engine/docs"
 	"sbs-engine/internal/cache"
 	"sbs-engine/internal/database"
 	"sbs-engine/internal/middleware"
+	"sbs-engine/internal/observability"
 	"sbs-engine/internal/response"
 
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -139,7 +141,13 @@ func (s *Server) buildMiddlewareChain(next http.Handler) http.Handler {
 	chain = middleware.RequestID(chain)
 	chain = middleware.SecurityHeaders(chain)
 	chain = middleware.Recover(chain)
+	chain = observability.Instrument(chain)
 	chain = middleware.APIVersionMiddleware(chain)
+	chain = otelhttp.NewHandler(chain, "sbs-engine",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
 	return chain
 }
 
@@ -264,7 +272,7 @@ func (s *Server) messageQoutesHandler(w http.ResponseWriter, _ *http.Request) {
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/donate [get]
-func (s *Server) donationHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) donationHandler(w http.ResponseWriter, r *http.Request) {
 	const key = "default"
 	const ttl = time.Hour
 
@@ -865,7 +873,7 @@ func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
 //	@Produce		json
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/languages [get]
-func (s *Server) getLanguages(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) getLanguages(w http.ResponseWriter, r *http.Request) {
 	const key = "all"
 	const ttl = time.Hour
 
@@ -879,9 +887,7 @@ func (s *Server) getLanguages(w http.ResponseWriter, _ *http.Request) {
 
 
 func SuccessResponse(w http.ResponseWriter, r *http.Request, data any, message string) {
-	version := middleware.GetAPIVersion(r)
-	fmt.Println("version", version)
-	switch version {
+	switch middleware.GetAPIVersion(r) {
 	case "1":
 		response.SuccessV1(w, data)
 	case "2":
