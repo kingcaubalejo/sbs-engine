@@ -72,7 +72,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, "login successful", loginResponse{Token: token, User: user})
+	response.SuccessV2(w, "login successful", loginResponse{Token: token, User: user})
 }
 
 // registerRequest is the body shape for POST /auth/register. The

@@ -218,7 +218,7 @@ func (s *Server) getBooksByVolumeHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	books := s.db.GetBooksByVolume(volumeNumber, language)
-	response.Success(w, "List of books per volume", books)
+	SuccessResponse(w, r, books, "List of books per volume")
 }
 
 // getVolumes godoc
@@ -231,7 +231,6 @@ func (s *Server) getBooksByVolumeHandler(w http.ResponseWriter, r *http.Request)
 func (s *Server) getVolumes(w http.ResponseWriter, r *http.Request) {
 	const key = "all"
 	const ttl = 5 * time.Minute
-	apiVersion := middleware.GetAPIVersion(r)
 
 	volumes, ok := s.caches.volumes.Get(key)
 	if !ok {
@@ -239,17 +238,7 @@ func (s *Server) getVolumes(w http.ResponseWriter, r *http.Request) {
 		s.caches.volumes.Set(key, volumes, ttl)
 	}
 
-	if apiVersion == "1" {
-		fmt.Println("legacy code should be read here")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-	
-		_ = json.NewEncoder(w).Encode(volumes)
-	} 
-	
-	if apiVersion == "2"  {
-		response.Success(w, "List of volumes", volumes)
-	}
+	SuccessResponse(w, r, volumes, "List of volumes")
 
 }
 
@@ -261,7 +250,7 @@ func (s *Server) getVolumes(w http.ResponseWriter, r *http.Request) {
 //	@Success		200	{object}	response.APIResponse
 //	@Router			/message-qoutes [get]
 func (s *Server) messageQoutesHandler(w http.ResponseWriter, _ *http.Request) {
-	response.Success(w, "Quotes", []string{
+	response.SuccessV2(w, "Quotes", []string{
 		"In the beginning was the Word, and the Word was with God.",
 		"For God so loved the world.",
 		"The Lord is my shepherd; I shall not want.",
@@ -284,7 +273,7 @@ func (s *Server) donationHandler(w http.ResponseWriter, _ *http.Request) {
 		donate = s.db.GetDonation()
 		s.caches.donate.Set(key, donate, ttl)
 	}
-	response.Success(w, "Paypal donate redirect url", donate)
+	SuccessResponse(w, r, donate, "Paypal donate redirect url")
 }
 
 func validateVolumeCreate(volume struct {
@@ -412,7 +401,7 @@ func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 	})
 	s.invalidateVolumeCaches(newVolume.ID)
 
-	response.Success(w, "Volume created successfully", newVolume)
+	response.SuccessV2(w, "Volume created successfully", newVolume)
 }
 
 // updateVolume godoc
@@ -463,7 +452,7 @@ func (s *Server) updateVolume(w http.ResponseWriter, r *http.Request) {
 	})
 	s.invalidateVolumeCaches(id)
 
-	response.Success(w, "Volume updated successfully", updatedVolume)
+	response.SuccessV2(w, "Volume updated successfully", updatedVolume)
 }
 
 // patchVolume godoc
@@ -506,7 +495,7 @@ func (s *Server) patchVolume(w http.ResponseWriter, r *http.Request) {
 	updatedVolume := s.db.PatchVolume(id, updates)
 	s.invalidateVolumeCaches(id)
 
-	response.Success(w, "Volume patched successfully", updatedVolume)
+	response.SuccessV2(w, "Volume patched successfully", updatedVolume)
 }
 
 // deleteVolume godoc
@@ -536,7 +525,7 @@ func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	s.invalidateVolumeCaches(id)
 
-	response.Success(w, "Volume deleted successfully", nil)
+	response.SuccessV2(w, "Volume deleted successfully", nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +551,7 @@ func (s *Server) getVolumeByID(w http.ResponseWriter, r *http.Request) {
 
 	const ttl = 5 * time.Minute
 	if v, ok := s.caches.volByID.Get(id); ok {
-		response.Success(w, "Volume retrieved", v)
+		response.SuccessV2(w, "Volume retrieved", v)
 		return
 	}
 
@@ -573,7 +562,7 @@ func (s *Server) getVolumeByID(w http.ResponseWriter, r *http.Request) {
 	}
 	s.caches.volByID.Set(id, volume, ttl)
 
-	response.Success(w, "Volume retrieved", volume)
+	SuccessResponse(w, r, volume, "Volume retrieved")
 }
 
 // getVolumesPaginated godoc
@@ -611,7 +600,7 @@ func (s *Server) getVolumesPaginated(w http.ResponseWriter, r *http.Request) {
 		Pages: pages,
 	}
 
-	response.Success(w, "Paginated list of volumes", result)
+	response.SuccessV2(w, "Paginated list of volumes", result)
 }
 
 // ---------------------------------------------------------------------------
@@ -649,7 +638,7 @@ func (s *Server) getSermonByLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, "Sermon retrieved", sermon)
+	response.SuccessV2(w, "Sermon retrieved", sermon)
 }
 
 // searchSermons godoc
@@ -679,7 +668,7 @@ func (s *Server) searchSermons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sermons := s.db.SearchSermons(query, lang)
-	response.Success(w, "Search results", sermons)
+	response.SuccessV2(w, "Search results", sermons)
 }
 
 // getRandomSermon godoc
@@ -703,7 +692,7 @@ func (s *Server) getRandomSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, "Random sermon", sermon)
+	response.SuccessV2(w, "Random sermon", sermon)
 }
 
 func validateSermon(s database.Sermon) []string {
@@ -748,7 +737,7 @@ func (s *Server) createSermon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := s.db.CreateSermon(sermon)
-	response.Success(w, "Sermon created successfully", created)
+	response.SuccessV2(w, "Sermon created successfully", created)
 }
 
 var allowedSermonPatchFields = map[string]bool{
@@ -797,7 +786,7 @@ func (s *Server) deleteSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, "Sermon deleted successfully", nil)
+	response.SuccessV2(w, "Sermon deleted successfully", nil)
 }
 
 // patchSermon godoc
@@ -843,7 +832,7 @@ func (s *Server) patchSermon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, "Sermon patched successfully", sermon)
+	response.SuccessV2(w, "Sermon patched successfully", sermon)
 }
 
 // ---------------------------------------------------------------------------
@@ -866,7 +855,7 @@ func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
 		stats = s.db.GetStats()
 		s.caches.stats.Set(key, stats, ttl)
 	}
-	response.Success(w, "Platform statistics", stats)
+	response.SuccessV2(w, "Platform statistics", stats)
 }
 
 // getLanguages godoc
@@ -885,5 +874,17 @@ func (s *Server) getLanguages(w http.ResponseWriter, _ *http.Request) {
 		langs = s.db.GetLanguages()
 		s.caches.langs.Set(key, langs, ttl)
 	}
-	response.Success(w, "Available languages", langs)
+	SuccessResponse(w, r, langs, "Available languages")
+}
+
+
+func SuccessResponse(w http.ResponseWriter, r *http.Request, data any, message string) {
+	version := middleware.GetAPIVersion(r)
+	fmt.Println("version", version)
+	switch version {
+	case "1":
+		response.SuccessV1(w, data)
+	case "2":
+		response.SuccessV2(w, message, data)
+	}
 }

@@ -18,3 +18,8 @@ func JSON(w http.ResponseWriter, statusCode int, payload APIResponse) {
 
 	_ = json.NewEncoder(w).Encode(payload)
 }
+
+func LegacyJSON(w http.ResponseWriter, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
+}
